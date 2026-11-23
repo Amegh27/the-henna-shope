@@ -16,6 +16,7 @@ import {
   Package,
   LayoutDashboard,
   Trash2,
+  Check, 
   Pencil,
 } from 'lucide-react';
 
@@ -48,8 +49,8 @@ export default function App() {
   const [adminUser, setAdminUser] = useState(null);
   const [customerUser, setCustomerUser] = useState(() => getCurrentUser());
   const [profileMenuOpen, setProfileMenuOpen] = useState(false);
-  const [loginOpen, setLoginOpen] = useState(false);
   const [adminOpen, setAdminOpen] = useState(false);
+  const [adminSessionChecked, setAdminSessionChecked] = useState(false);
 
   // STORE STATES
   // Restore the cart from localStorage when the app first loads.
@@ -118,11 +119,16 @@ export default function App() {
       let changed = false;
       const syncedCart = currentCart.map((item) => {
         const latestProduct = products.find((product) => product.id === item.id);
-        if (!latestProduct) return item;
+        if (!latestProduct) {
+          if (item.isAvailable === false) return item;
+          changed = true;
+          return { ...item, isAvailable: false };
+        }
 
         const updatedItem = {
           ...item,
           ...latestProduct,
+          isAvailable: true,
           qty: item.qty,
         };
 
@@ -200,23 +206,52 @@ export default function App() {
     };
   }, [location.pathname, navigate]);
 
-  // VALIDATE ADMIN SESSION
+  // VALIDATE ADMIN SESSION AND PROTECT THE DASHBOARD ROUTE.
   useEffect(() => {
-    const token = localStorage.getItem('adminToken');
+    let active = true;
 
-    if (!token) return;
+    async function validateAdminSession() {
+      const token = localStorage.getItem('adminToken');
 
-    getAdminProfile()
-      .then((admin) => {
+      if (!token) {
+        if (active) {
+          setAdminUser(null);
+          setAdminSessionChecked(true);
+          if (location.pathname === '/admin/dashboard') {
+            navigate('/admin', { replace: true });
+          }
+        }
+        return;
+      }
+
+      try {
+        const admin = await getAdminProfile();
+        if (!active) return;
         setAdminUser(admin);
-      })
-      .catch((err) => {
+        if (location.pathname === '/admin/dashboard') {
+          setAdminOpen(true);
+        } else if (location.pathname === '/admin') {
+          // An existing admin session should go straight to the dashboard.
+          navigate('/admin/dashboard', { replace: true });
+        }
+      } catch (err) {
         console.error('Admin session validation failed:', err);
-
         adminLogout();
-        setAdminUser(null);
-      });
-  }, []);
+        if (active) {
+          setAdminUser(null);
+          setAdminOpen(false);
+          if (location.pathname === '/admin/dashboard') {
+            navigate('/admin', { replace: true });
+          }
+        }
+      } finally {
+        if (active) setAdminSessionChecked(true);
+      }
+    }
+
+    validateAdminSession();
+    return () => { active = false; };
+  }, [location.pathname, navigate]);
 
   // FILTER PRODUCTS
   const shown = useMemo(() => {
@@ -237,7 +272,7 @@ export default function App() {
     0
   );
 
-  const hasOutOfStockItems = cart.some((item) => item.inStock === false);
+  const hasOutOfStockItems = cart.some((item) => item.inStock === false || item.isAvailable === false);
 
   // SHOW NOTIFICATION
   function showNotice(message) {
@@ -247,8 +282,8 @@ export default function App() {
 
   // ADD TO CART
   function add(product) {
-    if (product.inStock === false) {
-      showNotice('This product is currently out of stock');
+    if (product.inStock === false || product.isAvailable === false) {
+      showNotice('This product is currently unavailable');
       return;
     }
 
@@ -278,6 +313,55 @@ export default function App() {
         )
         .filter((item) => item.qty > 0)
     );
+  }
+
+  // REMOVE A PRODUCT FROM THE CART (including products deleted by admin)
+  async function removeCartItem(id) {
+    const itemToRemove = cart.find((item) => item.id === id);
+    if (!itemToRemove) return;
+
+    const result = await Swal.fire({
+      title: 'Remove from your bag?',
+      text: `Remove “${itemToRemove.name}” from your cart?`,
+      icon: 'warning',
+      iconColor: '#9b8968',
+      showCancelButton: true,
+      confirmButtonText: 'Yes, remove it',
+      cancelButtonText: 'Keep it',
+      reverseButtons: true,
+      background: '#fffdf7',
+      color: '#294b38',
+      width: '370px',
+      padding: '1.25rem',
+      confirmButtonColor: '#294b38',
+      cancelButtonColor: '#b8a98a',
+      customClass: {
+        popup: 'henna-swal-popup',
+        title: 'henna-swal-title',
+        confirmButton: 'henna-swal-confirm',
+        cancelButton: 'henna-swal-cancel',
+      },
+    });
+
+    if (!result.isConfirmed) return;
+
+    setCart((currentCart) => currentCart.filter((item) => item.id !== id));
+
+    await Swal.fire({
+      title: 'Removed from your bag',
+      text: 'The item has been removed from your cart.',
+      icon: 'success',
+      iconColor: '#294b38',
+      background: '#fffdf7',
+      color: '#294b38',
+      confirmButtonColor: '#294b38',
+      confirmButtonText: 'Lovely!',
+      customClass: {
+        popup: 'henna-swal-popup',
+        title: 'henna-swal-title',
+        confirmButton: 'henna-swal-confirm',
+      },
+    });
   }
 
   // ADD A NEW PRODUCT CATEGORY FROM THE ADMIN DASHBOARD
@@ -400,18 +484,109 @@ export default function App() {
     }
   }
 
-  // DEMO PRODUCT DELETE
-  function removeProduct(id) {
-    const updated = products.filter((p) => p.id !== id);
+  // DELETE A PRODUCT FROM THE ADMIN DASHBOARD
+  async function removeProduct(id) {
+    const productToDelete = products.find((product) => product.id === id);
+    if (!productToDelete) return;
 
-    setProducts(updated);
+    const result = await Swal.fire({
+      title: 'Remove this product?',
+      text: `“${productToDelete.name}” will be permanently removed from your store.`,
+      icon: 'warning',
+      iconColor: '#9b8968',
+      showCancelButton: true,
+      confirmButtonText: 'Yes, delete it',
+      cancelButtonText: 'Keep product',
+      reverseButtons: true,
+      background: '#fffdf7',
+      color: '#294b38',
+      width: '370px',
+      padding: '1.35rem',
+      confirmButtonColor: '#294b38',
+      cancelButtonColor: '#b8a98a',
+      customClass: {
+        popup: 'henna-swal-popup',
+        title: 'henna-swal-title',
+        confirmButton: 'henna-swal-confirm',
+        cancelButton: 'henna-swal-cancel',
+      },
+    });
 
-    localStorage.setItem(
-      'henna-products',
-      JSON.stringify(updated)
-    );
+    if (!result.isConfirmed) return;
 
-    showNotice('Demo product deleted');
+    try {
+      // Products fetched from MongoDB have string IDs. Products created by
+      // this prototype use numeric Date.now() IDs and are stored locally.
+      const isDatabaseProduct = typeof id === 'string';
+
+      if (isDatabaseProduct) {
+        const token = localStorage.getItem('adminToken');
+        if (!token) {
+          throw new Error('Your admin session has expired. Please log in again.');
+        }
+
+        const response = await fetch(`${API}/products/${encodeURIComponent(id)}`, {
+          method: 'DELETE',
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        const responseData = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          throw new Error(responseData.message || 'The product could not be deleted.');
+        }
+      }
+
+      const updated = products.filter((product) => product.id !== id);
+      setProducts(updated);
+      localStorage.setItem('henna-products', JSON.stringify(
+        updated.filter((product) => typeof product.id === 'number')
+      ));
+
+      // Keep the customer's cart line, but mark the deleted product unavailable.
+      // The customer can then see why it cannot be purchased and remove it manually.
+      setCart((currentCart) =>
+        currentCart.map((item) =>
+          item.id === id ? { ...item, isAvailable: false } : item
+        )
+      );
+
+      await Swal.fire({
+        title: 'Product removed',
+        text: `${productToDelete.name} has been removed from your store.`,
+        icon: 'success',
+        iconColor: '#294b38',
+        background: '#fffdf7',
+        color: '#294b38',
+        width: '350px',
+        padding: '1.2rem',
+        confirmButtonColor: '#294b38',
+        confirmButtonText: 'Lovely!',
+        customClass: {
+          popup: 'henna-swal-popup',
+          title: 'henna-swal-title',
+          confirmButton: 'henna-swal-confirm',
+        },
+      });
+    } catch (error) {
+      console.error('Product deletion failed:', error);
+      await Swal.fire({
+        title: 'Could not delete product',
+        text: error.message || 'Please try again.',
+        icon: 'error',
+        iconColor: '#9b4b3d',
+        background: '#fffdf7',
+        color: '#294b38',
+        confirmButtonColor: '#294b38',
+        confirmButtonText: 'Okay',
+        customClass: {
+          popup: 'henna-swal-popup',
+          title: 'henna-swal-title',
+          confirmButton: 'henna-swal-confirm',
+        },
+      });
+    }
   }
 
   // SAVE ORDER IN MONGODB, THEN OPEN WHATSAPP
@@ -542,33 +717,21 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
     }, 100);
   };
 
-  // ADMIN BUTTON
-  function handleAdminClick() {
-    if (adminUser) {
-      setAdminOpen(true);
-    } else {
-      setLoginOpen(true);
-    }
-  }
-
-  // SUCCESSFUL LOGIN
+  // SUCCESSFUL ADMIN LOGIN
   function handleLogin(admin) {
     setAdminUser(admin);
-    setLoginOpen(false);
+    setAdminSessionChecked(true);
     setAdminOpen(true);
-
-    showNotice('Welcome to your admin dashboard!');
+    navigate('/admin/dashboard', { replace: true });
   }
 
-  // LOGOUT
+  // ADMIN LOGOUT
   function handleLogout() {
     adminLogout();
-
     setAdminUser(null);
     setAdminOpen(false);
     setEditing(null);
-
-    showNotice('Logged out successfully');
+    navigate('/admin', { replace: true });
   }
 
   // LOADING COMPONENT
@@ -592,6 +755,33 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
         >
           Try again
         </button>
+      </div>
+    );
+  }
+
+  // ADMIN ROUTES: keep admin login separate from the customer storefront.
+  if (location.pathname === '/admin') {
+    // Do not show the login form again when a valid admin session exists.
+    if (!adminSessionChecked || adminUser) {
+      return (
+        <div className="app" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
+          <p className="empty">Checking admin session...</p>
+        </div>
+      );
+    }
+
+    return (
+      <AdminLogin
+        onClose={() => navigate('/', { replace: true })}
+        onLogin={handleLogin}
+      />
+    );
+  }
+
+  if (location.pathname === '/admin/dashboard' && (!adminSessionChecked || !adminUser)) {
+    return (
+      <div className="app" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center' }}>
+        <p className="empty">{adminSessionChecked ? 'Redirecting to admin login...' : 'Verifying admin session...'}</p>
       </div>
     );
   }
@@ -621,6 +811,40 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
   return (
     <div className="app">
       <style>{`
+        /* MEHNDI ARTISTRY SERVICE PROMO */
+        .mehndi-service-promo{display:grid;grid-template-columns:minmax(0,1fr) minmax(280px,.82fr);align-items:center;gap:clamp(24px,5vw,72px);margin:clamp(38px,6vw,82px) auto;padding:clamp(24px,5vw,64px);background:#f2e6d2;color:#294b38;border:1px solid rgba(125,95,43,.18)}
+        .mehndi-service-copy .eyebrow{color:#8c6c32}
+        .mehndi-service-copy h2{font-family:inherit;font-size:clamp(34px,4.2vw,58px);font-weight:400;line-height:1.08;margin:14px 0}
+        .mehndi-service-copy h2 em{font-style:italic;color:#9a7a3c}
+        .mehndi-service-copy p{max-width:490px;line-height:1.8;color:#59695b}
+        .mehndi-service-list{list-style:none;padding:0;margin:20px 0 28px;display:grid;gap:10px}
+        .mehndi-service-list li{display:flex;align-items:flex-start;gap:10px;color:#405545;font-size:14px}
+        .mehndi-service-list li:before{content:'✦';color:#a78a4c}
+        .mehndi-service-art{display:flex;justify-content:center;align-items:center;min-width:0}
+        .mehndi-service-art img{display:block;width:100%;max-width:430px;max-height:690px;object-fit:contain;box-shadow:0 18px 42px rgba(33,48,37,.18)}
+        @media(max-width:760px){.mehndi-service-promo{grid-template-columns:1fr;padding:22px;gap:28px}.mehndi-service-copy h2{font-size:38px}.mehndi-service-art img{max-height:620px;max-width:360px}}
+        .brand-emblem{width:42px;height:42px;flex:0 0 42px;object-fit:contain;display:block}
+        .header .brand-emblem{filter:brightness(0) invert(1)}
+        .brand{display:inline-flex;align-items:center;gap:11px}
+        .brand small{display:block}
+        /* HOME PAGE CATEGORY COLLECTION */
+        .home-category-grid{display:grid;grid-template-columns:minmax(0,1.05fr) minmax(0,1.55fr);grid-template-rows:clamp(190px,21vw,315px) clamp(190px,21vw,315px);gap:16px;margin-top:34px}
+        .home-category-card{position:relative;display:flex;flex-direction:column;justify-content:flex-end;align-items:flex-start;min-width:0;overflow:hidden;padding:clamp(22px,3vw,42px);border:0;border-radius:0;background-color:#b8aa8d;background-size:cover;background-position:center;color:#fffdf7;text-align:left;cursor:pointer;transition:background-size .45s ease,filter .3s ease}
+        .home-category-card:after{content:'';position:absolute;inset:0;border:1px solid rgba(255,255,255,.14);pointer-events:none}
+        .home-category-card:hover{filter:saturate(1.08)}
+        .home-category-card-1{grid-row:1 / span 2;min-height:100%}
+        .home-category-card-2{grid-column:2;grid-row:1}
+        .home-category-card-3{grid-column:2;grid-row:2;width:58%}
+        .home-category-kicker,.home-category-title{position:relative;z-index:1}
+        .home-category-kicker{font-size:10px;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:rgba(255,253,247,.9);margin-bottom:10px}
+        .home-category-title{font-family:Georgia,'Times New Roman',serif;font-size:clamp(25px,3vw,40px);font-weight:400;line-height:1.05;letter-spacing:-.035em}
+        .home-category-title span{font-family:Arial,sans-serif;font-size:.55em;vertical-align:middle;margin-left:7px}
+        .home-category-more{display:flex;justify-content:center;margin-top:25px}
+        .home-category-more button{display:inline-flex;align-items:center;gap:10px;padding:10px 4px;border:0;border-bottom:1px solid #a99b7d;background:transparent;color:#294b38;font-size:11px;letter-spacing:.12em;text-transform:uppercase;cursor:pointer;transition:gap .2s ease}
+        .home-category-more button:hover{gap:16px}
+        @media(max-width:700px){.home-category-grid{grid-template-columns:1fr 1fr;grid-template-rows:clamp(210px,55vw,310px) clamp(170px,43vw,240px);gap:10px;margin-top:25px}.home-category-card{padding:18px}.home-category-card-1{grid-row:1 / span 2}.home-category-card-2{grid-column:2;grid-row:1}.home-category-card-3{grid-column:2;grid-row:2;width:100%}.home-category-kicker{font-size:8px;letter-spacing:.1em}.home-category-title{font-size:clamp(20px,5vw,29px)}}
+        @media(max-width:420px){.home-category-grid{grid-template-columns:1fr;grid-template-rows:260px 190px 190px}.home-category-card-1,.home-category-card-2,.home-category-card-3{grid-column:1;grid-row:auto;width:100%}.home-category-card{padding:20px}}
+
         .brand-story{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:clamp(42px,7vw,100px);align-items:center;padding:clamp(70px,9vw,130px) max(6vw,24px);background:#f5f1e8;overflow:hidden}
         .brand-story-image-wrap{position:relative;max-width:590px;width:100%;justify-self:center;padding:0 34px 34px 0}
         .brand-story-image{display:block;width:100%;height:clamp(390px,48vw,610px);object-fit:cover;object-position:center;border-radius:48% 48% 5px 5px;box-shadow:0 24px 60px rgba(41,75,56,.13)}
@@ -708,11 +932,58 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
         .story-page-values h2{font-family:Georgia,'Times New Roman',serif;font-size:clamp(30px,4vw,48px);font-weight:400;color:#294b38;margin:18px 0 35px}
         .story-page-values .story-values{max-width:850px;margin:0 auto;text-align:left}
         @media(max-width:520px){.story-page-hero{padding:60px 20px 25px}.story-page-content{padding-top:45px;padding-bottom:55px}.story-page-values{padding:55px 22px}.story-page-values .story-values{grid-template-columns:1fr;gap:22px}}
+
+        /* PREMIUM OUR STORY PAGE */
+        .story-page{background:#f8f5ed!important;color:#203c2d!important;overflow:hidden}
+        .story-page-hero{position:relative;min-height:590px;display:grid;grid-template-columns:1.02fr .98fr;align-items:stretch;text-align:left!important;padding:0!important;background:#203c2d!important;color:#fffdf7;overflow:hidden}
+        .story-page-hero:before{content:'THE HENNA SHOPE';position:absolute;left:-22px;bottom:18px;font-family:Georgia,serif;font-size:clamp(70px,13vw,190px);white-space:nowrap;color:rgba(255,255,255,.035);letter-spacing:-.07em;pointer-events:none}
+        .story-hero-copy{position:relative;z-index:2;display:flex;flex-direction:column;justify-content:center;padding:clamp(55px,8vw,120px) clamp(28px,7vw,105px)}
+        .story-page-hero .eyebrow{justify-content:flex-start!important;color:#c6b58e!important;font-size:10px;letter-spacing:.24em;gap:12px}
+        .story-page-hero h1{font-size:clamp(52px,7.5vw,104px)!important;line-height:.98!important;letter-spacing:-.055em!important;color:#fffdf7!important;margin:30px 0 25px!important;max-width:650px}
+        .story-page-hero h1 em{color:#c6b58e!important}
+        .story-page-hero p{margin:0!important;max-width:420px!important;color:rgba(255,253,247,.72)!important;font-size:14px!important;line-height:1.95!important}
+        .story-hero-meta{display:flex;align-items:center;gap:16px;margin-top:42px;color:#d4c6a7;font-size:10px;letter-spacing:.18em;text-transform:uppercase}
+        .story-hero-meta:before{content:'';width:42px;height:1px;background:#b8a477}
+        .story-hero-image{position:relative;min-height:590px;overflow:hidden}
+        .story-hero-image img{width:100%;height:100%;position:absolute;inset:0;object-fit:cover;filter:saturate(.72);}
+        .story-hero-image:after{content:'';position:absolute;inset:0;background:linear-gradient(90deg,rgba(32,60,45,.28),transparent 48%),linear-gradient(0deg,rgba(22,39,29,.2),transparent 50%)}
+        .story-hero-image span{position:absolute;z-index:1;right:28px;bottom:28px;color:#fffdf7;font-size:9px;letter-spacing:.22em;text-transform:uppercase;writing-mode:vertical-rl}
+        .story-page-content{padding:clamp(75px,10vw,145px) max(7vw,24px)!important;gap:clamp(45px,8vw,120px)!important;background:#f8f5ed!important}
+        .story-page-content .brand-story-image-wrap{max-width:560px}
+        .story-page-content .brand-story-image{height:clamp(420px,52vw,650px);border-radius:2px!important;box-shadow:18px 18px 0 #e8e0d0!important}
+        .story-page-content .brand-story-image-wrap:after{display:none}
+        .story-page-content .story-image-note{border-radius:0!important;box-shadow:0 12px 32px rgba(32,60,45,.12);letter-spacing:.08em;text-transform:uppercase;font-size:9px;padding:15px 19px}
+        .story-page-content .story-image-number{color:#9b8968;letter-spacing:.25em}
+        .story-page-content .brand-story-copy{max-width:610px}
+        .story-page-content .brand-story-copy .eyebrow{color:#9b8968!important;font-size:9px;letter-spacing:.23em}
+        .story-page-content .brand-story-copy h2{font-size:clamp(42px,5.4vw,72px)!important;line-height:1.02!important;letter-spacing:-.05em!important;margin:25px 0 30px!important}
+        .story-page-content .brand-story-copy>p{font-size:14px;line-height:2.05;color:#6f786b;max-width:530px}
+        .story-page-content .brand-story-copy .story-secondary{color:#969486;font-size:13px}
+        .story-page-content .story-shop-button{margin-top:24px;border-radius:0!important;padding:17px 24px!important;letter-spacing:.12em;text-transform:uppercase;font-size:10px}
+        .story-interlude{padding:clamp(75px,10vw,130px) 24px;text-align:center;background:#e9e3d6;color:#294b38}
+        .story-interlude .eyebrow{justify-content:center;display:flex;align-items:center;gap:10px;color:#9b8968;font-size:9px;letter-spacing:.23em;font-weight:700}
+        .story-interlude h2{font:400 clamp(34px,5.2vw,66px)/1.12 Georgia,serif;letter-spacing:-.04em;max-width:850px;margin:25px auto 20px}
+        .story-interlude h2 em{color:#9b8968;font-weight:400}
+        .story-interlude p{max-width:570px;margin:0 auto;color:#78816f;font-size:13px;line-height:1.9}
+        .story-page-values{padding:clamp(75px,9vw,120px) max(7vw,24px)!important;background:#203c2d!important;color:#fffdf7!important;text-align:left!important}
+        .story-page-values>.eyebrow{justify-content:flex-start!important;color:#c6b58e!important;font-size:9px;letter-spacing:.23em}
+        .story-page-values h2{font-size:clamp(36px,5vw,62px)!important;color:#fffdf7!important;text-align:left;margin:22px 0 50px!important;letter-spacing:-.04em}
+        .story-page-values h2 em{color:#c6b58e!important}
+        .story-page-values .story-values{max-width:none!important;grid-template-columns:repeat(3,minmax(0,1fr));gap:0!important;border-top:1px solid rgba(255,255,255,.2)!important;margin-top:0!important;padding-top:0!important}
+        .story-page-values .story-values div{padding:30px 28px 10px 0;border-right:1px solid rgba(255,255,255,.16);margin-right:28px}
+        .story-page-values .story-values div:last-child{border:0;margin:0}
+        .story-page-values .story-values span{color:#c6b58e;font-size:24px}
+        .story-page-values .story-values b{color:#fffdf7;font-size:12px;letter-spacing:.04em}
+        .story-page-values .story-values small{color:rgba(255,253,247,.58);font-size:11px;line-height:1.7}
+        .story-closing{display:flex;justify-content:space-between;align-items:center;gap:24px;padding:35px max(7vw,24px);background:#f8f5ed;color:#7a806f;font-size:9px;letter-spacing:.18em;text-transform:uppercase}
+        .story-closing span:last-child{color:#9b8968}
+        @media(max-width:800px){.story-page-hero{grid-template-columns:1fr}.story-hero-copy{padding:80px 8vw 65px}.story-hero-image{min-height:420px}.story-page-values .story-values{grid-template-columns:1fr!important}.story-page-values .story-values div{border-right:0;border-bottom:1px solid rgba(255,255,255,.16);margin:0;padding:24px 0}.story-page-values .story-values div:last-child{border:0}.story-closing{flex-direction:column;align-items:flex-start}}
+        @media(max-width:520px){.story-page-hero h1{font-size:clamp(48px,14vw,72px)!important}.story-hero-image{min-height:340px}.story-page-content{padding:65px 22px!important}.story-page-content .brand-story-image{height:390px}.story-interlude{padding:70px 24px}.story-page-values{padding:65px 24px!important}.story-page-values h2{margin-bottom:28px!important}}
       `}</style>
 
       {/* ANNOUNCEMENT */}
 
-    
+      
 
       {/* HEADER */}
 
@@ -734,7 +1005,7 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
             setPage('home');
           }}
         >
-          <span className="brand-mark">✺</span>
+          <img className="brand-emblem" src="/images/henna-shope-logo2.png" alt="The Henna Shope logo" />
 
           <span>
             The Henna
@@ -888,7 +1159,12 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
                       });
 
                       if (result.isConfirmed) {
+                        // Clear the customer's cart when they log out.
+                        // Remove the persisted copy as well as clearing React state.
                         userLogout();
+                        setCart([]);
+                        localStorage.removeItem('henna-cart');
+                        setCartOpen(false);
                         setCustomerUser(null);
                         setProfileMenuOpen(false);
                         navigate('/');
@@ -942,13 +1218,6 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
               </button>
             </div>
           )}
-
-          <button
-            className="admin-trigger"
-            onClick={handleAdminClick}
-          >
-            {adminUser ? 'Dashboard' : 'Admin'}
-          </button>
 
         </div>
 
@@ -1014,7 +1283,7 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
                 </div>
 
                 <span>
-                  Loved by <b>2,000+</b> henna enthusiasts
+                  Loved by <b>25,000+</b> henna enthusiasts
                 </span>
 
               </div>
@@ -1081,6 +1350,8 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
 
           </section>
 
+
+
           {/* COLLECTION */}
 
           <section
@@ -1114,26 +1385,80 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
               <ProductLoading />
             ) : error ? (
               <ProductError />
-            ) : products.length === 0 ? (
-              <p className="empty">
-                No products available yet.
-              </p>
+            ) : customCategories.length === 0 ? (
+              <p className="empty">No categories available yet.</p>
             ) : (
+              <>
+                <div className="home-category-grid">
+                  {customCategories.slice(0, 3).map((item, index) => {
+                    // These are fixed homepage category images. They must not
+                    // be taken from product records, so adding/editing products
+                    // will never change the homepage category artwork.
+                    const categoryImages = [
+                      'https://images.unsplash.com/photo-1501004318641-b39e6451bec6?auto=format&fit=crop&w=1400&q=85',
+                      'https://images.unsplash.com/photo-1608571423902-eed4a5ad8108?auto=format&fit=crop&w=1400&q=85',
+                      'https://images.unsplash.com/photo-1518531933037-91b2f5f229cc?auto=format&fit=crop&w=1400&q=85'
+                    ];
 
-              <div className="product-grid">
+                    return (
+                      <button
+                        type="button"
+                        className={`home-category-card home-category-card-${index + 1}`}
+                        key={item}
+                        onClick={() => {
+                          setCategory(item);
+                          setQuery('');
+                          goShop();
+                        }}
+                        style={{ backgroundImage: `linear-gradient(0deg, rgba(16, 34, 25, .72), rgba(16, 34, 25, .02) 72%), url("${categoryImages[index]}")` }}
+                      >
+                        <span className="home-category-kicker">{item}</span>
+                        <span className="home-category-title">Explore <span aria-hidden="true">↗</span></span>
+                      </button>
+                    );
+                  })}
+                </div>
 
-                {products.slice(0, 4).map((p) => (
-                  <ProductCard
-                    key={p.id}
-                    p={p}
-                    add={add}
-                  />
-                ))}
-
-              </div>
-
+                <div className="home-category-more">
+                  <button type="button" onClick={() => { setCategory('All'); setQuery(''); goShop(); }}>
+                    Explore all categories <ArrowRight size={15} />
+                  </button>
+                </div>
+              </>
             )}
 
+          </section>
+
+
+                    {/* MEHNDI ARTISTRY SERVICE PROMO */}
+          <section className="mehndi-service-promo" id="mehndi-artistry">
+            <div className="mehndi-service-copy">
+              <div className="eyebrow">BEAUTY FOR YOUR SPECIAL MOMENTS</div>
+              <h2>More than henna.<br /><em>It's artistry.</em></h2>
+              <p>
+                Make your celebrations unforgettable with custom mehndi designs,
+                natural henna, and experienced artistry for every occasion.
+              </p>
+              <ul className="mehndi-service-list">
+                <li>Bridal & wedding mehndi</li>
+                <li>Engagements and celebrations</li>
+                <li>Festivals, baby showers & special occasions</li>
+                <li>We travel across Kannur & Calicut</li>
+              </ul>
+              <button className="button dark" type="button" onClick={goContact}>
+                Book your mehndi artist <ArrowRight size={17} />
+              </button>
+            </div>
+            <div className="mehndi-gallery">
+  <div className="mehndi-gallery-main">
+    <img src="/images/henna1.jpeg" alt="Mehndi design 1" />
+  </div>
+
+  <div className="mehndi-gallery-side">
+    <img src="/images/henna2.jpeg" alt="Mehndi design 2" />
+    <img src="/images/henna3.jpeg" alt="Mehndi design 3" />
+  </div>
+</div>
           </section>
 
           {/* QUOTE */}
@@ -1147,7 +1472,7 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
               <em>Make yours beautiful.</em>
             </p>
 
-            <small>THE MEHNDI & CO. PROMISE</small>
+            <small>THE HENNA SHOPE PROMISE</small>
           </section>
 
           {/* CONTACT */}
@@ -1204,41 +1529,49 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
 
         <main className="story-page" id="our-story-page">
           <section className="story-page-hero">
-            <div className="eyebrow"><span className="story-eyebrow-dot" /> THE HEART BEHIND THE HENNA SHOPE</div>
-            <h1>Our story, <em>our roots.</em></h1>
-            <p>A little tradition, a little nature, and a whole lot of love in every detail.</p>
+            <div className="story-hero-copy">
+              <div className="eyebrow"><span className="story-eyebrow-dot" /> THE HEART BEHIND THE HENNA SHOPE</div>
+              <h1>Beauty in<br />every <em>ritual.</em></h1>
+              <p>Some traditions are more than rituals. They are memories we carry, stories we share, and little moments that bring us closer to our roots.</p>
+              <div className="story-hero-meta">A story of nature, tradition &amp; care</div>
+            </div>
+            <div className="story-hero-image">
+              <img src="https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1400&q=90" alt="An intimate celebration filled with warmth and tradition" />
+              <span>01 — OUR BEGINNING</span>
+            </div>
           </section>
 
           <section className="brand-story story-page-content">
             <div className="brand-story-image-wrap">
-              <img
-                className="brand-story-image"
-                src="https://images.unsplash.com/photo-1519741497674-611481863552?auto=format&fit=crop&w=1200&q=90"
-                alt="A celebration inspired by the art of henna"
-                loading="lazy"
-              />
-              <div className="story-image-note"><Leaf size={17} /> Rooted in nature</div>
-              <span className="story-image-number">01 / OUR STORY</span>
+              <img className="brand-story-image" src="/images/tea-tree-essential-oil.jpeg" alt="Tea tree essential oil bottle arranged with fresh tea tree leaves" loading="lazy" />
+              <div className="story-image-note"><Leaf size={16} /> Inspired by nature</div>
+              <span className="story-image-number">02 / OUR PHILOSOPHY</span>
             </div>
-
             <div className="brand-story-copy">
               <div className="eyebrow"><span className="story-eyebrow-dot" /> A LITTLE ABOUT US</div>
-              <h2>Rooted in tradition,<br /><em>made with love.</em></h2>
+              <h2>Rooted in tradition,<br /><em>guided by nature.</em></h2>
               <p>Henna is more than colour on your skin. It is a ritual, a memory, and a little moment of joy. At The Henna Shope, we celebrate this beautiful tradition with thoughtfully chosen henna essentials that help you create meaningful moments of your own.</p>
-              <p className="story-secondary">From the first delicate line to the final deep stain, every detail deserves care. That is the feeling we want every order to bring to your home.</p>
+              <p className="story-secondary">We believe the smallest details can make a moment feel special. From choosing your essentials to creating the final design, we want every part of the experience to feel considered, beautiful, and personal.</p>
               <button className="button dark story-shop-button" onClick={goShop}>Explore our collection <ArrowRight size={17} /></button>
             </div>
           </section>
 
+          <section className="story-interlude">
+            <div className="eyebrow"><span className="story-eyebrow-dot" /> OUR POINT OF VIEW</div>
+            <h2>Not just what you create.<br /><em>How it makes you feel.</em></h2>
+            <p>For celebrations, quiet afternoons, and everything in between — we are here for the moments that deserve a little more meaning.</p>
+          </section>
+
           <section className="story-page-values">
-            <div className="eyebrow"><span className="story-eyebrow-dot" /> WHAT MATTERS TO US</div>
-            <h2>Little details. <em>Meaningful moments.</em></h2>
+            <div className="eyebrow"><span className="story-eyebrow-dot" /> THE THINGS WE BELIEVE IN</div>
+            <h2>Our values, <em>in every detail.</em></h2>
             <div className="story-values">
-              <div><span>✳</span><b>Thoughtfully chosen</b><small>Products picked with care</small></div>
-              <div><span>✿</span><b>Made for moments</b><small>Celebrate your own rituals</small></div>
-              <div><span>❋</span><b>Inspired by nature</b><small>Beauty in the little details</small></div>
+              <div><span>✳</span><b>Thoughtfully chosen</b><small>Essentials selected with care, so you can create with confidence.</small></div>
+              <div><span>✿</span><b>Made for meaningful moments</b><small>For the celebrations, traditions, and memories that stay with you.</small></div>
+              <div><span>❋</span><b>Inspired by nature</b><small>A deep appreciation for the natural beauty behind the art of henna.</small></div>
             </div>
           </section>
+          <div className="story-closing"><span>The Henna Shope · Made for your moments</span><span>With care, always ✳</span></div>
         </main>
 
       ) : (
@@ -1341,10 +1674,10 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
               setPage('home');
             }}
           >
-            <span className="brand-mark">✺</span>
+            <img className="brand-emblem" src="/images/henna-shope-logo2.png" alt="The Henna Shope logo" />
 
             <span>
-              mehndi<span className="brand-amp"> & </span>co.
+              The Henna Shope
               <small>THE ART OF NATURAL HENNA</small>
             </span>
           </a>
@@ -1387,7 +1720,7 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
         </div>
 
         <div className="copyright">
-          © 2026 Mehndi & Co. All rights reserved.
+          © 2026 The Henna Shope. All rights reserved.
           <span>Made with ♥</span>
         </div>
 
@@ -1438,10 +1771,10 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
                   {cart.map((i) => (
 
                     <div
-                      className={`cart-item ${i.inStock === false ? 'cart-item-out-of-stock' : ''}`}
+                      className={`cart-item ${i.inStock === false || i.isAvailable === false ? 'cart-item-out-of-stock' : ''}`}
                       key={i.id}
-                      aria-disabled={i.inStock === false}
-                      style={i.inStock === false ? {
+                      aria-disabled={i.inStock === false || i.isAvailable === false}
+                      style={i.inStock === false || i.isAvailable === false ? {
                         opacity: 0.48,
                         filter: 'grayscale(1)',
                         cursor: 'not-allowed',
@@ -1456,15 +1789,42 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
                         <span>{money(i.price)}</span>
                         <small
                           style={{
-                            display: 'inline-block',
+                            display: 'block',
                             marginTop: '5px',
-                            color: i.inStock === false ? '#b42318' : '#39734a',
+                            color: i.isAvailable === false || i.inStock === false ? '#b42318' : '#39734a',
                             fontWeight: 700,
                           }}
                         >
-                          {i.inStock === false ? 'Out of stock' : 'In stock'}
+                          {i.isAvailable === false
+                            ? 'This product is no longer available'
+                            : i.inStock === false
+                              ? 'Out of stock'
+                              : 'In stock'}
                         </small>
 
+                        {i.isAvailable === false ? (
+                          <button
+                            type="button"
+                            onClick={() => removeCartItem(i.id)}
+                            style={{
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              marginTop: '10px',
+                              padding: '7px 11px',
+                              border: '1px solid #b42318',
+                              borderRadius: '4px',
+                              background: '#fffdf7',
+                              color: '#b42318',
+                              fontSize: '12px',
+                              fontWeight: 700,
+                              cursor: 'pointer',
+                            }}
+                          >
+                            <Trash2 size={13} />
+                            Remove
+                          </button>
+                        ) : (
                         <div className="qty">
 
                           <button
@@ -1490,6 +1850,7 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
                           </button>
 
                         </div>
+                        )}
 
                       </div>
 
@@ -1607,20 +1968,9 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
 
       )}
 
-      {/* ADMIN LOGIN */}
-
-      {loginOpen && (
-
-        <AdminLogin
-          onClose={() => setLoginOpen(false)}
-          onLogin={handleLogin}
-        />
-
-      )}
-
       {/* ADMIN DASHBOARD */}
 
-      {adminOpen && adminUser && (
+      {location.pathname === '/admin/dashboard' && adminOpen && adminUser && (
 
         <div className="overlay admin-overlay">
 
@@ -1652,9 +2002,13 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
                   Logout
                 </button>
 
+                {/* Closing the dashboard keeps the saved admin session. */}
                 <button
                   className="icon-btn"
-                  onClick={() => setAdminOpen(false)}
+                  onClick={() => {
+                    setAdminOpen(false);
+                    navigate('/', { replace: true });
+                  }}
                 >
                   <X />
                 </button>
@@ -1874,9 +2228,9 @@ if (!/^[6-9]\d{9}$/.test(cleanPhone)) {
 
 function ProductCard({ p, add }) {
   return (
-
     <article className="product-card">
 
+      {/* Product Image */}
       <div className="product-image">
 
         <img src={p.image} alt={p.name} />
@@ -1905,20 +2259,26 @@ function ProductCard({ p, add }) {
           {p.inStock === false ? 'Out of stock' : 'In stock'}
         </span>
 
-        <button
-          className="quick-add"
-          onClick={() => add(p)}
-          disabled={p.inStock === false}
-          style={{
-            opacity: p.inStock === false ? 0.55 : 1,
-            cursor: p.inStock === false ? 'not-allowed' : 'pointer',
-          }}
-        >
-          {p.inStock === false ? 'Unavailable' : <><Plus size={18} /> Add to bag</>}
-        </button>
-
       </div>
 
+      {/* Add to Bag Button - Below Image */}
+    <button
+  className="quick-add"
+  onClick={() => add(p)}
+  disabled={p.inStock === false}
+>
+  {p.inStock === false ? (
+    'Unavailable'
+  ) : (
+    <>
+      <ShoppingBag size={16} />
+      <span>Add to Bag</span>
+      <Check size={17} className="quick-add-check" />
+    </>
+  )}
+</button>
+
+      {/* Product Details */}
       <div className="product-meta">
 
         <div>
@@ -1944,6 +2304,5 @@ function ProductCard({ p, add }) {
       </p>
 
     </article>
-
   );
 }
