@@ -1,17 +1,10 @@
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
-import nodemailer from 'nodemailer';
+import { Resend } from 'resend';
 import User from '../models/User.js';
 
-// EMAIL CONFIGURATION
-const transporter = nodemailer.createTransport({
-  service: 'gmail',
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS
-  }
-});
+const resend = new Resend(process.env.RESEND_API_KEY);
 
 // GENERATE OTP
 function generateOTP() {
@@ -28,8 +21,8 @@ function hashOTP(otp) {
 
 // SEND OTP EMAIL
 async function sendOTPEmail(email, otp) {
-  await transporter.sendMail({
-    from: `"The Henna Shope" <${process.env.EMAIL_USER}>`,
+  const { data, error } = await resend.emails.send({
+    from: process.env.EMAIL_FROM,
     to: email,
     subject: 'Verify your email - The Henna Shope',
     html: `
@@ -48,6 +41,13 @@ async function sendOTPEmail(email, otp) {
       </div>
     `
   });
+
+  if (error) {
+    console.error('Resend email error:', error);
+    throw new Error(error.message);
+  }
+
+  console.log('OTP email sent successfully:', data?.id);
 }
 
 // GENERATE JWT
