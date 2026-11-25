@@ -636,3 +636,158 @@
     padding: 10px 18px !important;
   }
 }
+
+/* ========== MOBILE APP-STYLE BOTTOM NAVIGATION ========== */
+.mobile-bottom-nav {
+  display: none;
+}
+
+@media (max-width: 700px) {
+  .app {
+    padding-bottom: calc(76px + env(safe-area-inset-bottom));
+  }
+
+  /* Hide desktop nav links on phone — bottom bar is primary nav */
+  .header .nav {
+    display: none !important;
+  }
+
+  .header .customer-auth-actions {
+    display: none !important;
+  }
+
+  .header .search-trigger {
+    display: none; /* optional: search is on Shop via bottom nav */
+  }
+
+  .mobile-bottom-nav {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 900;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    align-items: stretch;
+    min-height: 66px;
+    padding: 7px 7px calc(7px + env(safe-area-inset-bottom));
+    background: rgba(255, 253, 247, 0.97);
+    border-top: 1px solid #e8e2d6;
+    box-shadow: 0 -7px 24px rgba(31, 57, 43, 0.09);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+  }
+
+  .bottom-nav-item {
+    position: relative;
+    display: flex;
+    min-width: 0;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 4px;
+    border: 0;
+    border-radius: 10px;
+    padding: 4px 2px;
+    background: transparent;
+    color: #858778;
+    font: inherit;
+    font-size: 10px;
+    font-weight: 600;
+    line-height: 1;
+    cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+    transition: color 0.2s ease, background 0.2s ease;
+  }
+
+  .bottom-nav-item svg {
+    flex: 0 0 auto;
+    stroke-width: 1.8;
+  }
+
+  .bottom-nav-item.active {
+    color: #294b38;
+    background: #edf1e8;
+  }
+
+  .bottom-nav-item:active {
+    background: #e7ecdf;
+  }
+
+  .bottom-nav-icon-wrap {
+    position: relative;
+    display: grid;
+    place-items: center;
+  }
+
+  .bottom-nav-count {
+    position: absolute;
+    top: -7px;
+    right: -10px;
+    display: grid;
+    min-width: 16px;
+    height: 16px;
+    place-items: center;
+    padding: 0 4px;
+    border: 2px solid #fffdf7;
+    border-radius: 20px;
+    background: #294b38;
+    color: #fffdf7;
+    font-size: 9px;
+    line-height: 1;
+  }
+
+  .bottom-nav-avatar {
+    display: grid;
+    width: 22px;
+    height: 22px;
+    place-items: center;
+    border: 1px solid #294b38;
+    border-radius: 50%;
+    background: #294b38;
+    color: #fffdf7;
+    font-family: Georgia, serif;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+  }
+
+  /* Keep floating WhatsApp above the bottom bar */
+  .floating-wa {
+    bottom: calc(84px + env(safe-area-inset-bottom)) !important;
+  }
+
+  /* Cart drawer should sit above bottom nav */
+  .cart-drawer {
+    padding-bottom: calc(20px + env(safe-area-inset-bottom));
+  }
+}
+
+@media (max-width: 360px) {
+  .bottom-nav-item {
+    font-size: 9px;
+    gap: 3px;
+  }
+
+  .mobile-bottom-nav {
+    padding-left: 3px;
+    padding-right: 3px;
+  }
+}
+
+.header {
+  padding-left: 12px !important;
+  padding-right: 12px !important;
+}
+
+.header .brand small {
+  display: none; /* hide tagline on narrow screens */
+}
+
+.bag-btn span {
+  display: none; /* icon + count only */
+}
+
+.mobile-toggle {
+  display: none !important; /* bottom nav replaces hamburger */
+}
