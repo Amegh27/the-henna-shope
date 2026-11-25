@@ -28,7 +28,7 @@ import {
 } from './services/authService';
 
 import AdminLogin from './components/AdminLogin';
-import UserLogin from './components/UserLogin';
+import UserLogin from './components/userLogin';
 import UserSignup from './components/UserSignup';
 import VerifyEmail from './components/VerifyEmail';
 import { getCurrentUser, userLogout } from './services/userAuthService';
