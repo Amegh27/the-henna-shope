@@ -18,6 +18,7 @@ import {
   Trash2,
   Check,
   Pencil,
+  ChevronDown,
 } from 'lucide-react';
 
 import { getProducts } from './services/productService';
@@ -108,6 +109,8 @@ export default function App() {
   });
   const [category, setCategory] = useState('All');
   const [query, setQuery] = useState('');
+  const [shopPage, setShopPage] = useState(1);
+  const PRODUCTS_PER_PAGE = 6;
 
   const [page, setPage] = useState('home');
   const [cartOpen, setCartOpen] = useState(false);
@@ -414,6 +417,24 @@ export default function App() {
     );
   }, [products, category, query]);
 
+  const totalShopPages = Math.ceil(shown.length / PRODUCTS_PER_PAGE);
+  const paginatedProducts = shown.slice(
+    (shopPage - 1) * PRODUCTS_PER_PAGE,
+    shopPage * PRODUCTS_PER_PAGE
+  );
+
+  // Return to the first page whenever the category or search changes.
+  useEffect(() => {
+    setShopPage(1);
+  }, [category, query]);
+
+  // Keep the current page valid if products are added or removed.
+  useEffect(() => {
+    if (totalShopPages > 0 && shopPage > totalShopPages) {
+      setShopPage(totalShopPages);
+    }
+  }, [shopPage, totalShopPages]);
+
   const originalTotal = cart.reduce(
     (sum, item) => sum + item.price * item.qty,
     0
@@ -440,7 +461,7 @@ export default function App() {
   }
 
   // REQUIRE CUSTOMER LOGIN BEFORE ADDING ANY PRODUCT TO THE CART.
-  async function add(product) {
+  async function add(product, chosenSize = null) {
     const currentUser = getCurrentUser();
     setCustomerUser(currentUser);
 
@@ -468,32 +489,16 @@ export default function App() {
       return;
     }
 
-    let selectedSize = null;
-    if (Array.isArray(product.sizes) && product.sizes.length > 0) {
-      const options = product.sizes.map((size) => {
-        const label = size.label || `${size.quantity} ${size.unit}`;
-        return {
-          value: label,
-          text: `${label} — ${money(size.price)}`,
-        };
-      });
-      const result = await Swal.fire({
-        title: 'Choose a size',
-        input: 'select',
-        inputOptions: Object.fromEntries(options.map((option) => [option.value, option.text])),
-        inputPlaceholder: 'Select size',
-        showCancelButton: true,
-        confirmButtonText: 'Add to bag',
-        confirmButtonColor: '#294b38',
-        background: '#fffdf7',
-        color: '#294b38',
-        inputValidator: (value) => value ? undefined : 'Please select a size.',
-      });
-      if (!result.isConfirmed) return;
-      selectedSize = product.sizes.find((size) => (size.label || `${size.quantity} ${size.unit}`) === result.value);
-    }
+    // The product card's inline size dropdown already determines the variant.
+    // Add-to-bag therefore adds the currently selected size without another popup.
+    const availableSizes = Array.isArray(product.sizes) ? product.sizes : [];
+    const selectedSize = chosenSize || availableSizes.find(
+      (size) => Number(size.price) > 0
+    ) || null;
 
-    const sizeLabel = selectedSize ? (selectedSize.label || `${selectedSize.quantity} ${selectedSize.unit}`) : '';
+    const sizeLabel = selectedSize
+      ? (selectedSize.label || `${selectedSize.quantity} ${selectedSize.unit}`)
+      : '';
     const selectedPrice = Number(selectedSize?.price ?? product.price);
 
     if (!Number.isFinite(selectedPrice) || selectedPrice <= 0) {
@@ -1463,6 +1468,11 @@ export default function App() {
         .mehndi-service-art{display:flex;justify-content:center;align-items:center;min-width:0}
         .mehndi-service-art img{display:block;width:100%;max-width:430px;max-height:690px;object-fit:contain;box-shadow:0 18px 42px rgba(33,48,37,.18)}
         @media(max-width:760px){.mehndi-service-promo{grid-template-columns:1fr;padding:22px;gap:28px}.mehndi-service-copy h2{font-size:38px}.mehndi-service-art img{max-height:620px;max-width:360px}}
+        .shop-pagination{display:flex;justify-content:center;align-items:center;gap:8px;flex-wrap:wrap;margin:34px auto 12px}
+        .shop-pagination button{min-width:40px;height:40px;padding:0 12px;border:1px solid #c9c0ae;background:#fbf8f1;color:#294b38;border-radius:4px;font:inherit;font-size:13px;cursor:pointer;transition:background .2s ease,color .2s ease,border-color .2s ease}
+        .shop-pagination button:hover:not(:disabled),.shop-pagination button.active{background:#294b38;border-color:#294b38;color:#fff}
+        .shop-pagination button:disabled{opacity:.4;cursor:not-allowed}
+        .shop-pagination-label{color:#77796e;font-size:12px;margin:0 8px}
         .brand-emblem{width:42px;height:42px;flex:0 0 42px;object-fit:contain;display:block}
         .header .brand-emblem{filter:brightness(0) invert(1)}
         .brand{display:inline-flex;align-items:center;gap:11px}
@@ -2288,7 +2298,7 @@ export default function App() {
                   <span><small>QUICKEST WAY TO REACH US</small><b>Chat on WhatsApp</b><em>Let's talk about what you need</em></span>
                   <ArrowRight size={18} className="contact-arrow" />
                 </a>
-                <a className="contact-card" href="https://www.instagram.com/" target="_blank" rel="noreferrer">
+                <a className="contact-card" href="https://www.instagram.com/the__hennashope?dmpr=MWdzYzAxMXdjdGdkZg==/" target="_blank" rel="noreferrer">
                   <span className="contact-icon"><Instagram size={21} /></span>
                   <span><small>FOLLOW OUR JOURNEY</small><b>Find us on Instagram</b><em>Henna inspiration and little updates</em></span>
                   <ArrowRight size={18} className="contact-arrow" />
@@ -2513,7 +2523,7 @@ export default function App() {
 
             <div className="product-grid shop-grid">
 
-              {shown.map((p) => (
+              {paginatedProducts.map((p) => (
                 <ProductCard
                   key={p.id}
                   p={p}
@@ -2523,6 +2533,42 @@ export default function App() {
 
             </div>
 
+          )}
+
+          {!loading && !error && totalShopPages > 1 && (
+            <nav className="shop-pagination" aria-label="Shop products pagination">
+              <button
+                type="button"
+                onClick={() => setShopPage((current) => Math.max(1, current - 1))}
+                disabled={shopPage === 1}
+                aria-label="Previous page"
+              >
+                Previous
+              </button>
+
+              {Array.from({ length: totalShopPages }, (_, index) => index + 1).map((pageNumber) => (
+                <button
+                  key={pageNumber}
+                  type="button"
+                  className={shopPage === pageNumber ? 'active' : ''}
+                  onClick={() => setShopPage(pageNumber)}
+                  aria-current={shopPage === pageNumber ? 'page' : undefined}
+                  aria-label={`Page ${pageNumber}`}
+                >
+                  {pageNumber}
+                </button>
+              ))}
+
+              <button
+                type="button"
+                onClick={() => setShopPage((current) => Math.min(totalShopPages, current + 1))}
+                disabled={shopPage === totalShopPages}
+                aria-label="Next page"
+              >
+                Next
+              </button>
+              <span className="shop-pagination-label">Page {shopPage} of {totalShopPages}</span>
+            </nav>
           )}
 
           {!loading && !error && shown.length === 0 && (
@@ -2586,7 +2632,7 @@ export default function App() {
 
         <div>
           <b>Follow along</b>
-          <a href="#contact" onClick={(e) => { e.preventDefault(); goContact(); }}>
+          <a href="https://www.instagram.com/the__hennashope?dmpr=MWdzYzAxMXdjdGdkZg==" >
             <Instagram size={15} /> Instagram
           </a>
           <a href="#contact" onClick={(e) => { e.preventDefault(); goContact(); }}>
@@ -3719,28 +3765,43 @@ export default function App() {
 
 // PRODUCT CARD
 
-// PRODUCT CARD
-
 function ProductCard({ p, add }) {
-  // Get only the first size that has a valid price.
-  const firstSize = (p.sizes || []).find(
-    (size) => Number(size.price) > 0
+  const pricedSizes = (p.sizes || [])
+    .map((size) => ({
+      ...size,
+      price: Number(size.price),
+      label: size.label || `${size.quantity} ${size.unit}`,
+    }))
+    .filter((size) => Number.isFinite(size.price) && size.price > 0);
+
+  const sizeOptionsKey = pricedSizes
+    .map((size) => `${size.label}:${size.price}`)
+    .join('|');
+
+  const [selectedSizeLabel, setSelectedSizeLabel] = useState(
+    pricedSizes[0]?.label || ''
   );
 
-  const displayPrice = firstSize
-    ? Number(firstSize.price)
-    : Number(p.price) || 0;
+  // Keep the selected option valid if the admin changes a product's sizes.
+  useEffect(() => {
+    if (!pricedSizes.some((size) => size.label === selectedSizeLabel)) {
+      setSelectedSizeLabel(pricedSizes[0]?.label || '');
+    }
+  }, [p.id, sizeOptionsKey, selectedSizeLabel]);
 
-  const displaySize = firstSize
-    ? firstSize.label || `${firstSize.quantity} ${firstSize.unit}`
-    : '';
+  const selectedSize = pricedSizes.find(
+    (size) => size.label === selectedSizeLabel
+  ) || pricedSizes[0] || null;
+
+  const displayPrice = selectedSize
+    ? selectedSize.price
+    : Number(p.price) || 0;
 
   return (
     <article className="product-card">
 
       {/* Product Image */}
       <div className="product-image">
-
         <img src={p.image} alt={p.name} />
 
         {p.tag && (
@@ -3766,13 +3827,12 @@ function ProductCard({ p, add }) {
         >
           {p.inStock === false ? 'Out of stock' : 'In stock'}
         </span>
-
       </div>
 
-      {/* Add to Bag Button */}
+      {/* Add the currently selected size directly; no size popup. */}
       <button
         className="quick-add"
-        onClick={() => add(p)}
+        onClick={() => add(p, selectedSize)}
         disabled={p.inStock === false}
       >
         {p.inStock === false ? (
@@ -3786,57 +3846,110 @@ function ProductCard({ p, add }) {
         )}
       </button>
 
-      {/* Product Details */}
-      <div className="product-meta">
-
-        <div>
+      {/* Product name, selected price and inline size dropdown */}
+      <div className="product-meta" style={{ alignItems: 'flex-start', gap: '12px' }}>
+        <div style={{ flex: '1 1 auto', minWidth: 0 }}>
           <h3>{p.name}</h3>
 
-          {displaySize && (
-            <small
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'baseline',
+              gap: '7px',
+              marginTop: '7px',
+              flexWrap: 'wrap',
+            }}
+          >
+            <span
               style={{
-                display: 'block',
-                marginTop: '6px',
-                color: '#77796e',
+                fontSize: '17px',
+                fontWeight: 700,
+                color: '#294b38',
+                lineHeight: 1.2,
               }}
             >
-              {displaySize}
-            </small>
-          )}
+              {money(displayPrice)}
+            </span>
+
+            {p.oldPrice && (
+              <del style={{ fontSize: '12px', color: '#929184' }}>
+                {money(p.oldPrice)}
+              </del>
+            )}
+          </div>
 
           {p.bulkDiscountEnabled &&
             Number(p.bulkMinimumQuantity) > 0 &&
             Number(p.bulkDiscountAmount) > 0 && (
-              <div
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  marginTop: '9px',
-                  padding: '7px 11px',
-                  borderRadius: '7px',
-                  background: '#edf4e9',
-                  color: '#294b38',
-                  fontSize: '11px',
-                  fontWeight: 700,
-                  lineHeight: 1.4,
-                }}
-              >
+              <div style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px',
+                marginTop: '9px',
+                padding: '7px 11px',
+                borderRadius: '7px',
+                background: '#edf4e9',
+                color: '#294b38',
+                fontSize: '11px',
+                fontWeight: 700,
+                lineHeight: 1.4,
+              }}>
                 <Sparkles size={14} />
-                Buy {p.bulkMinimumQuantity}+ &amp; save{' '}
-                {money(p.bulkDiscountAmount)}
+                Buy {p.bulkMinimumQuantity}+ &amp; save {money(p.bulkDiscountAmount)}
               </div>
             )}
         </div>
 
-        <div className="price">
-          {money(displayPrice)}
+        {pricedSizes.length > 0 && (
+          <div
+            style={{
+              position: 'relative',
+              flex: '0 0 auto',
+              marginTop: '1px',
+            }}
+          >
+            <select
+              aria-label={`Choose size for ${p.name}`}
+              value={selectedSize?.label || ''}
+              onChange={(event) => setSelectedSizeLabel(event.target.value)}
+              style={{
+                appearance: 'none',
+                WebkitAppearance: 'none',
+                width: 'auto',
+                maxWidth: '118px',
+                minWidth: '76px',
+                padding: '8px 29px 8px 11px',
+                border: '1px solid #d9dfd3',
+                borderRadius: '20px',
+                outline: 'none',
+                background: '#fffdf7',
+                color: '#294b38',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              {pricedSizes.map((size) => (
+                <option key={size.label} value={size.label}>
+                  {size.label}
+                </option>
+              ))}
+            </select>
 
-          {p.oldPrice && (
-            <del>{money(p.oldPrice)}</del>
-          )}
-        </div>
-
+            <ChevronDown
+              size={14}
+              aria-hidden="true"
+              style={{
+                position: 'absolute',
+                right: '9px',
+                top: '50%',
+                transform: 'translateY(-50%)',
+                color: '#294b38',
+                pointerEvents: 'none',
+              }}
+            />
+          </div>
+        )}
       </div>
 
       <p className="product-desc">
