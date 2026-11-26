@@ -144,25 +144,8 @@ export default function App() {
   const [sizeUnit, setSizeUnit] = useState('ml');
   const sizeUnits = ['inch', 'g', 'S', 'M', 'L', 'ml', 'mm', 'pcs'];
 
-  // CATEGORIES: default categories plus any categories added by the admin.
-  const defaultCategories = [
-    'Henna Cones',
-    'Henna Powder',
-    'Kits & Sets',
-    'Aftercare',
-  ];
-
-  const [customCategories, setCustomCategories] = useState(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem('henna-categories') || 'null');
-      return Array.isArray(saved)
-        ? [...new Set(saved.filter(Boolean))]
-        : defaultCategories;
-    } catch (error) {
-      console.error('Failed to load categories:', error);
-      return defaultCategories;
-    }
-  });
+  // CATEGORIES: loaded from MongoDB so every browser sees the same list.
+  const [customCategories, setCustomCategories] = useState([]);
 
   const categories = ['All', ...customCategories];
 
@@ -272,6 +255,67 @@ export default function App() {
 
     fetchProducts();
   }, []);
+
+  // FETCH CATEGORIES FROM MONGODB.
+  // On the admin browser, migrate any categories from the old localStorage
+  // list once, then load the shared database list.
+  useEffect(() => {
+    let active = true;
+
+    async function fetchCategories() {
+      try {
+        const token = localStorage.getItem('adminToken');
+        const savedCategories = JSON.parse(
+          localStorage.getItem('henna-categories') || '[]'
+        );
+
+        if (token && Array.isArray(savedCategories) && savedCategories.length > 0) {
+          const syncResponse = await fetch(`${API}/categories/sync`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({ names: savedCategories }),
+          });
+
+          const syncData = await syncResponse.json().catch(() => ({}));
+
+          if (!syncResponse.ok) {
+            throw new Error(syncData.message || 'Could not sync existing categories.');
+          }
+        }
+
+        const response = await fetch(`${API}/categories`);
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.message || 'Failed to load categories.');
+        }
+
+        if (active) {
+          const names = (data.categories || [])
+            .map((item) => item.name)
+            .filter(Boolean);
+
+          setCustomCategories([...new Set(names)]);
+
+          // The database is now the source of truth.
+          if (token) {
+            localStorage.setItem('henna-categories', JSON.stringify([...new Set(names)]));
+          }
+        }
+      } catch (error) {
+        console.error('Category loading failed:', error);
+      }
+    }
+
+    fetchCategories();
+
+    return () => {
+      active = false;
+    };
+  }, [adminUser]);
 
   // KEEP CUSTOMER SESSION IN SYNC AND PREVENT AUTHENTICATED USERS
   // FROM OPENING THE LOGIN OR SIGNUP PAGES.
@@ -506,7 +550,7 @@ export default function App() {
     });
   }
 
-  // ADD A NEW PRODUCT CATEGORY FROM THE ADMIN DASHBOARD
+  // ADD A NEW PRODUCT CATEGORY TO MONGODB.
   async function addCategory() {
     const result = await Swal.fire({
       title: 'Add a category',
@@ -529,18 +573,45 @@ export default function App() {
 
     if (!result.isConfirmed) return;
 
-    const newCategory = result.value.trim();
-    const updatedCategories = [...customCategories, newCategory];
-    setCustomCategories(updatedCategories);
-    localStorage.setItem('henna-categories', JSON.stringify(updatedCategories));
-    setCategory(newCategory);
+    try {
+      const token = localStorage.getItem('adminToken');
+      if (!token) throw new Error('Your admin session has expired. Please log in again.');
 
-    await Swal.fire({
-      title: 'Category added!',
-      text: `${newCategory} is now available in your shop filters and product form.`,
-      icon: 'success',
-      confirmButtonColor: '#294b38',
-    });
+      const newCategory = result.value.trim();
+      const response = await fetch(`${API}/categories`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ name: newCategory }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.message || 'Could not add category.');
+      }
+
+      const updatedCategories = [...customCategories, data.category.name];
+      setCustomCategories(updatedCategories);
+      localStorage.setItem('henna-categories', JSON.stringify(updatedCategories));
+      setCategory(data.category.name);
+
+      await Swal.fire({
+        title: 'Category added!',
+        text: `${newCategory} is now available in your shop filters and product form.`,
+        icon: 'success',
+        confirmButtonColor: '#294b38',
+      });
+    } catch (error) {
+      console.error('Category creation failed:', error);
+      await Swal.fire({
+        title: 'Could not add category',
+        text: error.message || 'Please try again.',
+        icon: 'error',
+        confirmButtonColor: '#294b38',
+      });
+    }
   }
 
   // OPEN THE INLINE CATEGORY EDITOR INSIDE THE ADMIN DASHBOARD.
@@ -551,8 +622,7 @@ export default function App() {
     setCategoryMessage('');
   }
 
-  // Save category changes using the PATCH endpoint exposed by the backend.
-  // Products already assigned to this category are updated in MongoDB first.
+  // Save category changes in MongoDB. The backend also updates all assigned products.
   async function saveCategoryEdit(oldName, proposedName = categoryEditValue) {
     const newName = String(proposedName || '').trim();
 
@@ -578,39 +648,30 @@ export default function App() {
       return;
     }
 
-    const affected = products.filter((product) => product.category === oldName);
-    const databaseProducts = affected.filter((product) =>
-      isMongoObjectId(String(product._id || product.id || ''))
-    );
-    const token = localStorage.getItem('adminToken');
-
-    if (databaseProducts.length > 0 && !token) {
-      setCategoryMessage('Your admin session has expired. Please log in again.');
-      return;
-    }
-
-    const updatedIds = new Set();
     try {
       setCategorySaving(true);
-      setCategoryMessage(`Updating ${databaseProducts.length} saved product(s)...`);
+      setCategoryMessage('Saving category...');
 
-      for (const product of databaseProducts) {
-        const id = String(product._id || product.id || '');
-        const response = await fetch(`${API}/products/${encodeURIComponent(id)}`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ category: newName }),
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(data.message || data.error || `Could not update ${product.name} (HTTP ${response.status}).`);
-        }
-        updatedIds.add(id);
+      const token = localStorage.getItem('adminToken');
+      if (!token) {
+        throw new Error('Your admin session has expired. Please log in again.');
       }
 
+      const response = await fetch(`${API}/categories/rename`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ oldName, newName }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.message || 'Could not rename category.');
+      }
+
+      const affected = products.filter((product) => product.category === oldName);
       const updatedCategories = customCategories.map((item) =>
         item === oldName ? newName : item
       );
@@ -633,22 +694,6 @@ export default function App() {
       setCategoryMessage(`Saved successfully. “${oldName}” is now “${newName}”. ${affected.length} product(s) updated.`);
     } catch (error) {
       console.error('Category rename failed:', error);
-
-      // Keep the UI consistent if the server updated some products before
-      // another product failed. The category itself remains available to retry.
-      if (updatedIds.size > 0) {
-        const partiallyUpdated = products.map((product) => {
-          const id = String(product._id || product.id || '');
-          return updatedIds.has(id) ? { ...product, category: newName } : product;
-        });
-        setProducts(partiallyUpdated);
-        localStorage.setItem(
-          'henna-products',
-          JSON.stringify(partiallyUpdated.filter((product) =>
-            !isMongoObjectId(String(product._id || product.id || ''))
-          ))
-        );
-      }
       setCategoryMessage(error.message || 'Could not save the category. Please try again.');
     } finally {
       setCategorySaving(false);
@@ -668,7 +713,7 @@ export default function App() {
     setCategoryMessage('');
   }
 
-  // Move any products to another category before removing the category itself.
+  // Move assigned products and delete the category in MongoDB.
   async function confirmDeleteCategory(categoryName, replacementName = categoryDeleteReplacement) {
     if (categorySaving) return;
 
@@ -681,39 +726,36 @@ export default function App() {
       return;
     }
 
-    const databaseProducts = affected.filter((product) =>
-      isMongoObjectId(String(product._id || product.id || ''))
-    );
-    const token = localStorage.getItem('adminToken');
-    if (databaseProducts.length > 0 && !token) {
-      setCategoryMessage('Your admin session has expired. Please log in again.');
-      return;
-    }
-
-    const updatedIds = new Set();
     try {
       setCategorySaving(true);
-      setCategoryMessage(`Moving ${databaseProducts.length} saved product(s)...`);
+      setCategoryMessage('Deleting category...');
 
-      for (const product of databaseProducts) {
-        const id = String(product._id || product.id || '');
-        const response = await fetch(`${API}/products/${encodeURIComponent(id)}`, {
-          method: 'PATCH',
-          headers: {
-            'Content-Type': 'application/json',
-            Authorization: `Bearer ${token}`,
-          },
-          body: JSON.stringify({ category: replacement }),
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok) {
-          throw new Error(data.message || data.error || `Could not move ${product.name} (HTTP ${response.status}).`);
-        }
-        updatedIds.add(id);
+      const token = localStorage.getItem('adminToken');
+      if (!token) {
+        throw new Error('Your admin session has expired. Please log in again.');
+      }
+
+      const response = await fetch(`${API}/categories`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          name: categoryName,
+          replacementCategory: replacement,
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error(data.message || 'Could not delete category.');
       }
 
       const updatedProducts = products.map((product) =>
-        product.category === categoryName ? { ...product, category: replacement } : product
+        product.category === categoryName
+          ? { ...product, category: replacement }
+          : product
       );
       const updatedCategories = customCategories.filter((item) => item !== categoryName);
 
@@ -734,13 +776,6 @@ export default function App() {
         : `“${categoryName}” has been deleted.`);
     } catch (error) {
       console.error('Category deletion failed:', error);
-      if (updatedIds.size > 0) {
-        const partiallyUpdated = products.map((product) => {
-          const id = String(product._id || product.id || '');
-          return updatedIds.has(id) ? { ...product, category: replacement } : product;
-        });
-        setProducts(partiallyUpdated);
-      }
       setCategoryMessage(error.message || 'Could not delete this category. Please try again.');
     } finally {
       setCategorySaving(false);
@@ -3265,7 +3300,23 @@ export default function App() {
                       <h3>Manage categories</h3>
                       <p style={{ margin: '5px 0 0', color: '#7b8176', fontSize: '13px' }}>Categories added here become available in the product form and shop filters.</p>
                     </div>
-                    <button className="button dark" type="button" onClick={addCategory}><Plus size={16} /> Add category</button>
+                    <button
+  className="button dark"
+  type="button"
+  style={{
+    position: 'relative',
+    zIndex: 100010,
+    pointerEvents: 'auto',
+    cursor: 'pointer'
+  }}
+  onClick={(event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    addCategory();
+  }}
+>
+  <Plus size={16} /> Add category
+</button>
                   </div>
                   {categoryMessage && (
                     <p
