@@ -2096,9 +2096,9 @@ export default function App() {
                     // be taken from product records, so adding/editing products
                     // will never change the homepage category artwork.
                     const categoryImages = [
-                      'https://images.unsplash.com/photo-1501004318641-b39e6451bec6?auto=format&fit=crop&w=1400&q=85',
+                      '/images/cat1.jpeg',
                       'https://images.unsplash.com/photo-1608571423902-eed4a5ad8108?auto=format&fit=crop&w=1400&q=85',
-                      'https://images.unsplash.com/photo-1518531933037-91b2f5f229cc?auto=format&fit=crop&w=1400&q=85'
+                      '/images/cat2.jpeg'
                     ];
 
                     return (
