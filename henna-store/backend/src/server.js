@@ -24,10 +24,8 @@ app.use(helmet());
 
 // CORS MUST come before API routes
 app.use(cors({
-  origin: (process.env.CLIENT_URL)
-    .split(',')
-    .map(x => x.trim()),
-  methods: ['GET', 'POST', 'PATCH', 'DELETE'],
+  origin: (process.env.CLIENT_URL).split(',').map(x => x.trim()),
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 

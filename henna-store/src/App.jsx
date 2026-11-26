@@ -59,6 +59,7 @@ const normalizeProduct = (product) => {
     sizes: Array.isArray(product.sizes)
       ? product.sizes.map((size) => ({
           ...size,
+          price: Number(size.price ?? product.price ?? 0),
           label: size.label || `${size.quantity} ${size.unit}`,
         }))
       : [],
@@ -141,6 +142,7 @@ export default function App() {
   const [imagePreview, setImagePreview] = useState('');
   const [productSizes, setProductSizes] = useState([]);
   const [sizeQuantity, setSizeQuantity] = useState('');
+  const [sizePrice, setSizePrice] = useState('');
   const [sizeUnit, setSizeUnit] = useState('ml');
   const sizeUnits = ['inch', 'g', 'S', 'M', 'L', 'ml', 'mm', 'pcs'];
 
@@ -170,9 +172,22 @@ export default function App() {
           return { ...item, isAvailable: false };
         }
 
+        const matchingSize = item.selectedSize
+          ? (latestProduct.sizes || []).find(
+              (size) => (size.label || `${size.quantity} ${size.unit}`) === item.selectedSize
+            )
+          : null;
+
         const updatedItem = {
           ...item,
           ...latestProduct,
+          // A cart line keeps the price of its selected size, not the
+          // product's lowest/default compatibility price.
+          price: matchingSize
+            ? Number(matchingSize.price)
+            : item.selectedSize
+              ? item.price
+              : Number(latestProduct.price),
           isAvailable: true,
           qty: item.qty,
         };
@@ -455,10 +470,13 @@ export default function App() {
 
     let selectedSize = null;
     if (Array.isArray(product.sizes) && product.sizes.length > 0) {
-      const options = product.sizes.map((size) => ({
-        value: size.label || `${size.quantity} ${size.unit}`,
-        text: size.label || `${size.quantity} ${size.unit}`,
-      }));
+      const options = product.sizes.map((size) => {
+        const label = size.label || `${size.quantity} ${size.unit}`;
+        return {
+          value: label,
+          text: `${label} — ${money(size.price)}`,
+        };
+      });
       const result = await Swal.fire({
         title: 'Choose a size',
         input: 'select',
@@ -476,6 +494,18 @@ export default function App() {
     }
 
     const sizeLabel = selectedSize ? (selectedSize.label || `${selectedSize.quantity} ${selectedSize.unit}`) : '';
+    const selectedPrice = Number(selectedSize?.price ?? product.price);
+
+    if (!Number.isFinite(selectedPrice) || selectedPrice <= 0) {
+      await Swal.fire({
+        title: 'Price not available',
+        text: 'This product size does not have a valid price yet. Please contact the store admin.',
+        icon: 'warning',
+        confirmButtonColor: '#294b38',
+      });
+      return;
+    }
+
     const cartKey = `${productId}::${sizeLabel}`;
     setCart((old) => {
       const found = old.find((item) => (item.cartKey || `${item.id}::${item.selectedSize || ''}`) === cartKey);
@@ -483,7 +513,15 @@ export default function App() {
         ? old.map((item) => (item.cartKey || `${item.id}::${item.selectedSize || ''}`) === cartKey
           ? { ...item, qty: item.qty + 1 }
           : item)
-        : [...old, { ...product, id: productId, _id: productId, selectedSize: sizeLabel, cartKey, qty: 1 }];
+        : [...old, {
+            ...product,
+            id: productId,
+            _id: productId,
+            selectedSize: sizeLabel,
+            price: selectedPrice,
+            cartKey,
+            qty: 1,
+          }];
     });
     showNotice(`${product.name}${sizeLabel ? ` (${sizeLabel})` : ''} added to your bag`);
   }
@@ -834,10 +872,35 @@ export default function App() {
         throw new Error('Please choose a product image before saving.');
       }
 
+      // Every product must have at least one size, and every size must
+      // have its own selling price.
+      if (!productSizes.length) {
+        throw new Error('Please add at least one product size with its price.');
+      }
+
+      const pricedSizes = productSizes.map((size) => ({
+        quantity: Number(size.quantity),
+        unit: size.unit,
+        price: Number(size.price),
+      }));
+
+      if (pricedSizes.some((size) =>
+        !Number.isFinite(size.quantity) ||
+        size.quantity <= 0 ||
+        !Number.isFinite(size.price) ||
+        size.price <= 0
+      )) {
+        throw new Error('Every product size must have a valid price greater than zero.');
+      }
+
+      // Keep `price` as a compatibility field for the current API/catalog.
+      // The actual customer price is always taken from the selected size.
+      const lowestSizePrice = Math.min(...pricedSizes.map((size) => size.price));
+
       const productData = {
         name: String(form.get('name') || '').trim(),
         category: form.get('category'),
-        price: Number(form.get('price')),
+        price: lowestSizePrice,
         oldPrice: Number(form.get('oldPrice')) || null,
         tag: form.get('tag') || 'New',
         description: form.get('desc') || '',
@@ -852,10 +915,7 @@ export default function App() {
           0,
           Number(form.get('bulkDiscountAmount')) || 0
         ),
-        sizes: productSizes.map((size) => ({
-          quantity: Number(size.quantity),
-          unit: size.unit,
-        })),
+        sizes: pricedSizes,
       };
 
       // Old timestamp-ID products are recreated with POST. Real MongoDB
@@ -917,6 +977,7 @@ export default function App() {
       setImagePreview('');
       setProductSizes([]);
       setSizeQuantity('');
+      setSizePrice('');
       setSizeUnit('ml');
       formElement.reset();
       setAdminView('list');
@@ -1107,7 +1168,8 @@ export default function App() {
           items: cart.map((item) => ({
             productId: String(item._id || item.id),
             quantity: Number(item.qty),
-            selectedSize: item.selectedSize || '' 
+            selectedSize: item.selectedSize || '',
+            unitPrice: Number(item.price)
           }))
         })
       });
@@ -2991,10 +3053,15 @@ export default function App() {
                 <span>Catalog value</span>
                 <b>
                   {money(
-                    products.reduce(
-                      (sum, p) => sum + p.price,
-                      0
-                    )
+                    products.reduce((sum, product) => {
+                      const prices = (product.sizes || [])
+                        .map((size) => Number(size.price))
+                        .filter((price) => Number.isFinite(price) && price > 0);
+                      const startingPrice = prices.length
+                        ? Math.min(...prices)
+                        : Number(product.price) || 0;
+                      return sum + startingPrice;
+                    }, 0)
                   )}
                 </b>
               </div>
@@ -3028,6 +3095,7 @@ export default function App() {
                     setEditing(null);
                     setProductSizes([]);
                     setSizeQuantity('');
+                    setSizePrice('');
                     setSizeUnit('ml');
                     setImageFile(null);
                     setImagePreview('');
@@ -3047,6 +3115,7 @@ export default function App() {
                     setEditing(null);
                     setProductSizes([]);
                     setSizeQuantity('');
+                    setSizePrice('');
                     setSizeUnit('ml');
                     setImageFile(null);
                     setImagePreview('');
@@ -3078,7 +3147,7 @@ export default function App() {
                       <h3>Products</h3>
                       <p style={{ margin: '5px 0 0', color: '#7b8176', fontSize: '13px' }}>View and manage products currently displayed in your shop.</p>
                     </div>
-                    <button className="button dark" type="button" onClick={() => { setEditing(null); setProductSizes([]); setSizeQuantity(''); setSizeUnit('ml'); setImageFile(null); setImagePreview(''); setAdminView('add'); }}>
+                    <button className="button dark" type="button" onClick={() => { setEditing(null); setProductSizes([]); setSizeQuantity(''); setSizePrice(''); setSizeUnit('ml'); setImageFile(null); setImagePreview(''); setAdminView('add'); }}>
                       <Plus size={16} /> Add product
                     </button>
                   </div>
@@ -3096,12 +3165,18 @@ export default function App() {
                       )}
                       {products.map((p) => {
                         const productId = String(p._id || p.id || '');
+                        const listedSizePrices = (p.sizes || [])
+                          .map((size) => Number(size.price))
+                          .filter((price) => Number.isFinite(price) && price > 0);
+                        const listedStartingPrice = listedSizePrices.length
+                          ? Math.min(...listedSizePrices)
+                          : Number(p.price) || 0;
                         return (
                           <div className="admin-product" key={productId}>
                             <img src={p.image} alt={p.name} />
                             <div style={{ minWidth: 0 }}>
                               <b>{p.name}</b>
-                              <small>{p.category} · {money(p.price)} · {p.inStock === false ? 'Out of stock' : 'In stock'}</small>
+                              <small>{p.category} · {money(listedStartingPrice)} · {p.inStock === false ? 'Out of stock' : 'In stock'}</small>
                             </div>
                             {productDeleteId === productId ? (
                               <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', justifyContent: 'flex-end', flexWrap: 'wrap', gap: '8px', paddingTop: '8px' }}>
@@ -3111,7 +3186,20 @@ export default function App() {
                               </div>
                             ) : (
                               <>
-                                <button type="button" title="Edit product" onClick={() => { setEditing(p); setProductSizes(Array.isArray(p.sizes) ? p.sizes : []); setSizeUnit(p.sizes?.[0]?.unit || 'ml'); setSizeQuantity(''); setImageFile(null); setImagePreview(p.image || ''); setAdminView('add'); }}>
+                                <button type="button" title="Edit product" onClick={() => {
+                                  setEditing(p);
+                                  setProductSizes(Array.isArray(p.sizes) ? p.sizes.map((size) => ({
+                                    ...size,
+                                    price: Number(size.price ?? p.price ?? ''),
+                                    label: size.label || `${size.quantity} ${size.unit}`,
+                                  })) : []);
+                                  setSizeUnit(p.sizes?.[0]?.unit || 'ml');
+                                  setSizeQuantity('');
+                                  setSizePrice('');
+                                  setImageFile(null);
+                                  setImagePreview(p.image || '');
+                                  setAdminView('add');
+                                }}>
                                   <Pencil size={16} />
                                 </button>
                                 <button type="button" title="Delete product" onClick={() => removeProduct(productId)}>
@@ -3143,7 +3231,6 @@ export default function App() {
                       <select name="category" defaultValue={editing?.category || customCategories[0]} required>
                         {customCategories.map((c) => <option key={c} value={c}>{c}</option>)}
                       </select>
-                      <input name="price" type="number" min="0" placeholder="Price (₹)" defaultValue={editing?.price ?? ''} required />
                     </div>
 
                     <div className="form-row">
@@ -3153,36 +3240,137 @@ export default function App() {
 
                     <div style={{ padding: '16px', border: '1px solid #dfe5da', borderRadius: '12px', background: '#fbfcf8', display: 'grid', gap: '12px' }}>
                       <div>
-                        <strong style={{ color: '#294b38' }}>Product sizes (optional)</strong>
-                        <small style={{ display: 'block', color: '#788273', marginTop: '3px' }}>Add multiple quantities using one unit for this product.</small>
+                        <strong style={{ color: '#294b38' }}>Product sizes and prices (required)</strong>
+                        <small style={{ display: 'block', color: '#788273', marginTop: '3px' }}>
+                          Add each available size with its own selling price. Customers will choose a size before adding the product to their bag.
+                        </small>
                       </div>
+
                       <div className="form-row">
-                        <input type="number" min="0.01" step="any" placeholder="Enter quantity" value={sizeQuantity} onChange={(event) => setSizeQuantity(event.target.value)} />
-                        <select value={sizeUnit} onChange={(event) => setSizeUnit(event.target.value)} disabled={productSizes.length > 0}>
+                        <input
+                          type="number"
+                          min="0.01"
+                          step="any"
+                          placeholder="Enter quantity"
+                          value={sizeQuantity}
+                          onChange={(event) => setSizeQuantity(event.target.value)}
+                        />
+                        <select
+                          value={sizeUnit}
+                          onChange={(event) => setSizeUnit(event.target.value)}
+                          disabled={productSizes.length > 0}
+                        >
                           {sizeUnits.map((unit) => <option key={unit} value={unit}>{unit}</option>)}
                         </select>
                       </div>
-                      {productSizes.length > 0 && <small style={{ color: '#788273' }}>Unit locked to {sizeUnit}. Remove all sizes to choose another unit.</small>}
-                      <button type="button" className="button outline" onClick={() => {
-                        const quantity = sizeQuantity.trim();
-                        if (!quantity || !Number.isFinite(Number(quantity)) || Number(quantity) <= 0) {
-                          Swal.fire({ title: 'Enter a valid quantity', text: 'Please enter a quantity greater than zero.', icon: 'warning', confirmButtonColor: '#294b38' });
-                          return;
-                        }
-                        const label = `${quantity} ${sizeUnit}`;
-                        if (productSizes.some((size) => (size.label || `${size.quantity} ${size.unit}`) === label)) {
-                          Swal.fire({ title: 'Size already added', text: 'This size is already in the list.', icon: 'info', confirmButtonColor: '#294b38' });
-                          return;
-                        }
-                        setProductSizes((current) => [...current, { quantity: Number(quantity), unit: sizeUnit, label }]);
-                        setSizeQuantity('');
-                      }}><Plus size={15} /> Add size</button>
-                      {productSizes.length > 0 && <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-                        {productSizes.map((size, index) => <span key={`${size.label}-${index}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '8px', padding: '7px 10px', borderRadius: '20px', background: '#eaf1e6', color: '#294b38', fontSize: '13px', fontWeight: 700 }}>
-                          {size.label || `${size.quantity} ${size.unit}`}
-                          <button type="button" aria-label={`Remove ${size.label}`} onClick={() => setProductSizes((current) => current.filter((_, itemIndex) => itemIndex !== index))} style={{ border: 0, background: 'transparent', color: '#8b453b', cursor: 'pointer', padding: 0, display: 'inline-flex' }}><X size={14} /></button>
-                        </span>)}
-                      </div>}
+
+                      <input
+                        type="number"
+                        min="0.01"
+                        step="0.01"
+                        placeholder="Price for this size (₹)"
+                        value={sizePrice}
+                        onChange={(event) => setSizePrice(event.target.value)}
+                      />
+
+                      {productSizes.length > 0 && (
+                        <small style={{ color: '#788273' }}>
+                          Unit locked to {sizeUnit}. Remove all sizes to choose another unit.
+                        </small>
+                      )}
+
+                      <button
+                        type="button"
+                        className="button outline"
+                        onClick={() => {
+                          const quantity = sizeQuantity.trim();
+                          const price = sizePrice.trim();
+
+                          if (!quantity || !Number.isFinite(Number(quantity)) || Number(quantity) <= 0) {
+                            Swal.fire({ title: 'Enter a valid quantity', text: 'Please enter a quantity greater than zero.', icon: 'warning', confirmButtonColor: '#294b38' });
+                            return;
+                          }
+
+                          if (!price || !Number.isFinite(Number(price)) || Number(price) <= 0) {
+                            Swal.fire({ title: 'Enter a valid price', text: 'Please enter a price greater than zero for this size.', icon: 'warning', confirmButtonColor: '#294b38' });
+                            return;
+                          }
+
+                          const label = `${quantity} ${sizeUnit}`;
+                          if (productSizes.some((size) => (size.label || `${size.quantity} ${size.unit}`) === label)) {
+                            Swal.fire({ title: 'Size already added', text: 'This size is already in the list.', icon: 'info', confirmButtonColor: '#294b38' });
+                            return;
+                          }
+
+                          setProductSizes((current) => [
+                            ...current,
+                            { quantity: Number(quantity), unit: sizeUnit, label, price: Number(price) },
+                          ]);
+                          setSizeQuantity('');
+                          setSizePrice('');
+                        }}
+                      >
+                        <Plus size={15} /> Add size and price
+                      </button>
+
+                      {productSizes.length > 0 && (
+                        <div style={{ display: 'grid', gap: '9px' }}>
+                          {productSizes.map((size, index) => (
+                            <div
+                              key={`${size.label || size.quantity}-${index}`}
+                              style={{
+                                display: 'grid',
+                                gridTemplateColumns: 'minmax(0, 1fr) minmax(110px, 150px) auto',
+                                alignItems: 'center',
+                                gap: '9px',
+                                padding: '9px 11px',
+                                borderRadius: '10px',
+                                background: '#eaf1e6',
+                              }}
+                            >
+                              <strong style={{ color: '#294b38', fontSize: '13px' }}>
+                                {size.label || `${size.quantity} ${size.unit}`}
+                              </strong>
+                              <input
+                                type="number"
+                                min="0.01"
+                                step="0.01"
+                                aria-label={`Price for ${size.label || `${size.quantity} ${size.unit}`}`}
+                                value={size.price ?? ''}
+                                onChange={(event) => setProductSizes((current) => current.map((item, itemIndex) =>
+                                  itemIndex === index
+                                    ? { ...item, price: event.target.value }
+                                    : item
+                                ))}
+                                style={{
+                                  width: '100%',
+                                  minWidth: 0,
+                                  padding: '8px',
+                                  border: '1px solid #d2ddce',
+                                  borderRadius: '7px',
+                                  background: '#fff',
+                                  color: '#294b38',
+                                }}
+                              />
+                              <button
+                                type="button"
+                                aria-label={`Remove ${size.label || size.quantity}`}
+                                onClick={() => setProductSizes((current) => current.filter((_, itemIndex) => itemIndex !== index))}
+                                style={{
+                                  border: 0,
+                                  background: 'transparent',
+                                  color: '#8b453b',
+                                  cursor: 'pointer',
+                                  padding: '4px',
+                                  display: 'inline-flex',
+                                }}
+                              >
+                                <X size={16} />
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     <div className="admin-image-upload" style={{ border: '1px dashed #b9c7b5', borderRadius: '14px', padding: '18px', background: '#fbfcf8', display: 'grid', gap: '12px' }}>
@@ -3278,7 +3466,7 @@ export default function App() {
 
                     <div className="form-actions">
                       <button className="button dark" type="submit">{editing ? 'Update product' : 'Save product'} <Plus size={16} /></button>
-                      <button type="button" className="button outline" onClick={() => { setEditing(null); setProductSizes([]); setSizeQuantity(''); setSizeUnit('ml'); setImageFile(null); setImagePreview(''); setAdminView('list'); }}>Cancel</button>
+                      <button type="button" className="button outline" onClick={() => { setEditing(null); setProductSizes([]); setSizeQuantity(''); setSizePrice(''); setSizeUnit('ml'); setImageFile(null); setImagePreview(''); setAdminView('list'); }}>Cancel</button>
                     </div>
                   </form>
                 </section>
@@ -3531,7 +3719,22 @@ export default function App() {
 
 // PRODUCT CARD
 
+// PRODUCT CARD
+
 function ProductCard({ p, add }) {
+  // Get only the first size that has a valid price.
+  const firstSize = (p.sizes || []).find(
+    (size) => Number(size.price) > 0
+  );
+
+  const displayPrice = firstSize
+    ? Number(firstSize.price)
+    : Number(p.price) || 0;
+
+  const displaySize = firstSize
+    ? firstSize.label || `${firstSize.quantity} ${firstSize.unit}`
+    : '';
+
   return (
     <article className="product-card">
 
@@ -3566,7 +3769,7 @@ function ProductCard({ p, add }) {
 
       </div>
 
-      {/* Add to Bag Button - Below Image */}
+      {/* Add to Bag Button */}
       <button
         className="quick-add"
         onClick={() => add(p)}
@@ -3587,35 +3790,47 @@ function ProductCard({ p, add }) {
       <div className="product-meta">
 
         <div>
-     
-
           <h3>{p.name}</h3>
-          {Array.isArray(p.sizes) && p.sizes.length > 0 && (
-            <small style={{ display: 'block', marginTop: '6px', color: '#77796e' }}></small>
+
+          {displaySize && (
+            <small
+              style={{
+                display: 'block',
+                marginTop: '6px',
+                color: '#77796e',
+              }}
+            >
+              {displaySize}
+            </small>
           )}
 
-          {p.bulkDiscountEnabled && Number(p.bulkMinimumQuantity) > 0 && Number(p.bulkDiscountAmount) > 0 && (
-            <div style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '6px',
-              marginTop: '9px',
-              padding: '7px 11px',
-              borderRadius: '7px',
-              background: '#edf4e9',
-              color: '#294b38',
-              fontSize: '11px',
-              fontWeight: 700,
-              lineHeight: 1.4,
-            }}>
-              <Sparkles size={14} />
-              Buy {p.bulkMinimumQuantity}+ &amp; save {money(p.bulkDiscountAmount)}
-            </div>
-          )}
+          {p.bulkDiscountEnabled &&
+            Number(p.bulkMinimumQuantity) > 0 &&
+            Number(p.bulkDiscountAmount) > 0 && (
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '6px',
+                  marginTop: '9px',
+                  padding: '7px 11px',
+                  borderRadius: '7px',
+                  background: '#edf4e9',
+                  color: '#294b38',
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  lineHeight: 1.4,
+                }}
+              >
+                <Sparkles size={14} />
+                Buy {p.bulkMinimumQuantity}+ &amp; save{' '}
+                {money(p.bulkDiscountAmount)}
+              </div>
+            )}
         </div>
 
         <div className="price">
-          {money(p.price)}
+          {money(displayPrice)}
 
           {p.oldPrice && (
             <del>{money(p.oldPrice)}</del>

@@ -1,33 +1,9 @@
 import Category from '../models/Category.js';
 import Product from '../models/Product.js';
 
-const defaultCategories = [
-  'Henna Cones',
-  'Henna Powder',
-  'Kits & Sets',
-  'Aftercare'
-];
-
 // GET all categories
+// Only return categories actually stored in MongoDB.
 export async function list(req, res) {
-  // Include categories already used by products
-  const productCategories = await Product.distinct('category');
-
-  // Include default categories
-  const allNames = [
-    ...defaultCategories,
-    ...productCategories
-  ].filter(Boolean);
-
-  // Add missing categories to MongoDB
-  for (const name of allNames) {
-    await Category.updateOne(
-      { name },
-      { $setOnInsert: { name } },
-      { upsert: true }
-    );
-  }
-
   const categories = await Category.find()
     .sort({ createdAt: 1 });
 
@@ -44,8 +20,10 @@ export async function create(req, res) {
     });
   }
 
+  const escapedName = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
   const existing = await Category.findOne({
-    name: { $regex: `^${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, $options: 'i' }
+    name: { $regex: `^${escapedName}$`, $options: 'i' }
   });
 
   if (existing) {
@@ -78,9 +56,11 @@ export async function rename(req, res) {
     });
   }
 
+  const escapedName = newName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
   const duplicate = await Category.findOne({
     name: {
-      $regex: `^${newName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`,
+      $regex: `^${escapedName}$`,
       $options: 'i'
     },
     _id: { $ne: category._id }
@@ -165,25 +145,10 @@ export async function remove(req, res) {
   });
 }
 
-// Import categories from the existing admin browser's localStorage
+// Legacy sync endpoint
+// Does not recreate categories from old browser storage.
 export async function sync(req, res) {
-  const names = Array.isArray(req.body.names)
-    ? req.body.names
-    : [];
-
-  for (const value of names) {
-    const name = String(value).trim();
-
-    if (!name) continue;
-
-    await Category.updateOne(
-      { name },
-      { $setOnInsert: { name } },
-      { upsert: true }
-    );
-  }
-
   res.json({
-    message: 'Categories synced successfully.'
+    message: 'Automatic category syncing is disabled.'
   });
 }

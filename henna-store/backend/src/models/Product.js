@@ -10,6 +10,11 @@ const sizeSchema = new mongoose.Schema({
     type: String,
     required: true,
     enum: ['inch', 'g', 'S', 'M', 'L', 'ml', 'mm', 'pcs']
+  },
+  price: {
+    type: Number,
+    required: true,
+    min: 0.01
   }
 }, { _id: false });
 
@@ -26,10 +31,13 @@ const schema = new mongoose.Schema({
     trim: true
   },
 
+  // Compatibility field for older frontend logic and existing products.
+  // The controller always sets this to the lowest size price automatically.
+  // Customers are charged using the selected size's own price.
   price: {
     type: Number,
-    required: true,
-    min: 0
+    min: 0,
+    default: 0
   },
 
   oldPrice: {
