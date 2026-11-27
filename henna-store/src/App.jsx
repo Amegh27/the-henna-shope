@@ -1576,7 +1576,7 @@ export default function App() {
         .hero-copy h1 em{font-weight:400!important;color:#fffdf7!important;font-style:italic!important}
         .hero-copy>p{max-width:390px!important;color:rgba(255,253,247,.86)!important;font-size:15px!important;line-height:1.8!important}
         .hero-actions{margin-top:32px!important}
-        .hero-actions .button.dark{background:#fffdf7!important;color:#102e24!important;border:1px solid #fffdf7!important;border-radius:0!important;padding:18px 25px!important;letter-spacing:.12em!important;text-transform:uppercase!important;font-size:11px!important}
+        .hero-actions .button.dark{background:#fffdf7!important;color:#102e24!important;border:1px solid #fffdf7!important;padding:18px 25px!important;letter-spacing:.12em!important;text-transform:uppercase!important;font-size:11px!important}
         .hero-actions .text-link{color:#fffdf7!important}
         .hero-proof{color:rgba(255,253,247,.8)!important;margin-top:45px!important}
         .hero-proof b{color:#fffdf7!important}
@@ -2064,10 +2064,13 @@ export default function App() {
 
               <div className="hero-actions">
 
-                <button className="button dark" onClick={goShop}>
-                  Explore the collection
-                  <ArrowRight size={17} />
-                </button>
+                <button
+  className="button dark explore-btn"
+  onClick={goShop}
+>
+  Explore the collection
+  <ArrowRight size={17} />
+</button>
 
                 <button
                   type="button"
@@ -2077,7 +2080,7 @@ export default function App() {
                     window.scrollTo({ top: 0, behavior: 'smooth' });
                   }}
                 >
-                  Discover our story <span>↗</span>
+                  
                 </button>
 
               </div>
@@ -2221,7 +2224,7 @@ export default function App() {
                         style={{ backgroundImage: `linear-gradient(0deg, rgba(16, 34, 25, .72), rgba(16, 34, 25, .02) 72%), url("${categoryImages[index]}")` }}
                       >
                         <span className="home-category-kicker">{item}</span>
-                        <span className="home-category-title">Explore <span aria-hidden="true">↗</span></span>
+                        <span className="home-category-title">Explore <span aria-hidden="true"></span></span>
                       </button>
                     );
                   })}
@@ -2254,12 +2257,12 @@ export default function App() {
                 <li>We travel across Kannur & Calicut</li>
               </ul>
               <button className="button dark" type="button" onClick={bookMehndiArtist}>
-                Book your mehndi artist <ArrowRight size={17} />
+                Book your artist <ArrowRight size={17} />
               </button>
             </div>
             <div className="mehndi-gallery">
               <div className="mehndi-gallery-main">
-                <img src="/images/henna1.jpeg" alt="Mehndi design 1" />
+                <img src="/images/mehndi1.jpeg" alt="Mehndi design 1" />
               </div>
 
               <div className="mehndi-gallery-side">
@@ -2623,12 +2626,7 @@ export default function App() {
           <a href="#contact" onClick={(e) => { e.preventDefault(); goContact(); }}>Contact us</a>
         </div>
 
-        <div>
-          <b>Need help?</b>
-          <a href="#contact" onClick={(e) => { e.preventDefault(); goContact(); }}>FAQs</a>
-          <a href="#contact" onClick={(e) => { e.preventDefault(); goContact(); }}>Shipping &amp; returns</a>
-          <a href="#contact" onClick={(e) => { e.preventDefault(); goContact(); }}>Care guide</a>
-        </div>
+        
 
         <div>
           <b>Follow along</b>
@@ -3847,8 +3845,18 @@ function ProductCard({ p, add }) {
       </button>
 
       {/* Product name, selected price and inline size dropdown */}
-      <div className="product-meta" style={{ alignItems: 'flex-start', gap: '12px' }}>
-        <div style={{ flex: '1 1 auto', minWidth: 0 }}>
+<div
+  className="product-meta"
+  style={{
+    display: 'flex',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '8px',
+    flexWrap: 'nowrap',
+    width: '100%',
+  }}
+>        <div style={{ flex: '1 1 auto', minWidth: 0 }}>
           <h3>{p.name}</h3>
 
           <div
@@ -3900,56 +3908,53 @@ function ProductCard({ p, add }) {
             )}
         </div>
 
-        {pricedSizes.length > 0 && (
-          <div
-            style={{
-              position: 'relative',
-              flex: '0 0 auto',
-              marginTop: '1px',
-            }}
-          >
-            <select
-              aria-label={`Choose size for ${p.name}`}
-              value={selectedSize?.label || ''}
-              onChange={(event) => setSelectedSizeLabel(event.target.value)}
-              style={{
-                appearance: 'none',
-                WebkitAppearance: 'none',
-                width: 'auto',
-                maxWidth: '118px',
-                minWidth: '76px',
-                padding: '8px 29px 8px 11px',
-                border: '1px solid #d9dfd3',
-                borderRadius: '20px',
-                outline: 'none',
-                background: '#fffdf7',
-                color: '#294b38',
-                fontSize: '12px',
-                fontWeight: 600,
-                cursor: 'pointer',
-              }}
-            >
-              {pricedSizes.map((size) => (
-                <option key={size.label} value={size.label}>
-                  {size.label}
-                </option>
-              ))}
-            </select>
+{pricedSizes.length > 0 && (
+  <div
+    style={{
+      position: 'relative',
+      flex: '0 0 100px',
+      width: '100px',
+      minWidth: '100px',
+    }}
+  >
+    <select
+      value={selectedSizeLabel}
+      onChange={(e) => setSelectedSizeLabel(e.target.value)}
+      style={{
+        width: '100%',
+        boxSizing: 'border-box',
+        appearance: 'none',
+        WebkitAppearance: 'none',
+        border: '1px solid #d8d8d0',
+        borderRadius: '20px',
+        background: 'transparent',
+        padding: '8px 27px 8px 10px',
+        fontSize: '12px',
+        color: '#294b38',
+        cursor: 'pointer',
+        outline: 'none',
+      }}
+    >
+      {pricedSizes.map((item) => (
+        <option key={item.label} value={item.label}>
+          {item.label}
+        </option>
+      ))}
+    </select>
 
-            <ChevronDown
-              size={14}
-              aria-hidden="true"
-              style={{
-                position: 'absolute',
-                right: '9px',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                color: '#294b38',
-                pointerEvents: 'none',
-              }}
-            />
-          </div>
-        )}
+    <ChevronDown
+      size={14}
+      style={{
+        position: 'absolute',
+        right: '9px',
+        top: '50%',
+        transform: 'translateY(-50%)',
+        pointerEvents: 'none',
+        color: '#294b38',
+      }}
+    />
+  </div>
+)}
       </div>
 
       <p className="product-desc">
